@@ -3,6 +3,7 @@ require "config"
 
 table.tostring = nil
 table.tostring = function(thetable, custom)
+  if not thetable then return "nil" end
 
   local string_parts = {}
   for k, v in pairs(thetable) do
@@ -92,5 +93,29 @@ end
 function util.print(string)
   if _CONFIG._DEBUG then
     game.print(string)
+  end
+end
+
+function util.logunexpectednil()
+end
+
+function util.logunexpectedtype()
+end
+
+function util.tableoruserdata(value)
+  local result = false
+  if value then
+    if type(value) == "userdata" or type(value) == "table" then
+      result = true
+    end
+  end
+  return result
+end
+
+function util.protected(func)
+  if _CONFIG._DEBUG then
+    return true, func()
+  else
+    return pcall(func)
   end
 end

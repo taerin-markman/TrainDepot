@@ -1,9 +1,9 @@
 local automatedTrainBuildingTechnology =
 {
   type = "technology",
-  name = "automated-train-building",
+  name = "train-depot-automated-train-building",
   icon_size = 128,
-  icon = "__TrainDepot__/graphics/technology/automated-train-building.png",
+  icon = "__TrainDepot__/graphics/technology/train-depot-automated-train-building.png",
   effects =
   {
     {
@@ -12,7 +12,7 @@ local automatedTrainBuildingTechnology =
     },
     {
       type = "unlock-recipe",
-      recipe = "train-counter"
+      recipe = "train-depot-counter"
     }
   },
   prerequisites = {"automated-rail-transportation", "circuit-network"},

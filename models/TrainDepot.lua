@@ -4,7 +4,7 @@ local TrainBuild = require "models/TrainBuild"
 
 local TrainDepot = {}
 TrainDepot.__index = TrainDepot
-TrainDepot.version = 2
+TrainDepot.version = 3
 
 function TrainDepot.new(depot_entity)
   local self = setmetatable({}, TrainDepot)
@@ -14,12 +14,11 @@ function TrainDepot.new(depot_entity)
   self.depot = depot_entity
   self.train_build = nil
   self.built_trains = {}
-  self.storage = nil
   self.cooldown_remaining = 0
   self.paused = false
-  self.waiting_for_train_to_leave = nil
   self.num_trains_built = 0
   self.rail = self:get_connected_rail()
+  self.status_text = depot_entity.surface.create_entity({name = "flying-text", position = depot_entity.position, direction = depot_entity.direction, force = depot_entity.force, text = "[color=red]train-depot-status.hello[/color]"})
 
   local surface = depot_entity.surface
   local position = depot_entity.position
@@ -35,9 +34,6 @@ function TrainDepot.new(depot_entity)
   if direction == defines.direction.north then
     position = util.movepositioncomplex(position, defines.direction.north, 1)
   end
-
-  local storage = {name = "train-depot-storage", position = position, force = depot_entity.force}
-  self.storage = surface.create_entity(storage)
 
   return self
 end
@@ -67,7 +63,11 @@ function TrainDepot:get_connected_rail()
 end
 
 function TrainDepot:is_rail_block_clear()
-  -- TODO: I don't know how to determine this without enormous complexity...
+  if self.rail and self.rail.valid() then
+    return (self.rail.trains_in_block == 0)
+  else
+    return true
+  end
 end
 
 function TrainDepot.parameters_from_signals(red_circuit_network, green_circuit_network)
@@ -134,7 +134,7 @@ function TrainDepot:construct_train_build()
 
   if source_train then
     -- util.print("source_train: " .. source_train.id)
-    train_build = TrainBuild.new(self.depot, source_train, self.storage, parameters)
+    train_build = TrainBuild.new(self.depot, self.rail, source_train, self.storage, parameters)
   end
 
 ::done::
@@ -145,6 +145,11 @@ function TrainDepot:update(ticks)
   local valid = true
   local complete = true
   local control = nil
+  local reason = nil
+
+  if self.status_text and not self.status_text.valid then
+    self.status_text = nil
+  end
 
   if not self.depot.valid then
     valid = false
@@ -158,25 +163,6 @@ function TrainDepot:update(ticks)
     goto done
   end
 
-  if self.waiting_for_train_to_leave and self.waiting_for_train_to_leave.valid then
-    if self.waiting_for_train_to_leave.state == defines.train_state.wait_station then
-      util.print("Waiting for train to leave...")
-      goto done
-    end
-
-    local schedule = self.waiting_for_train_to_leave.schedule
-    if schedule and schedule.records[1] and schedule.records[1].station == self.depot.backer_name then
-      table.remove(schedule.records, 1)
-      -- util.print("schedule " .. table.tostring(schedule))
-      schedule.current = schedule.current - 1
-      if schedule.current < 1 then
-        schedule.current = 1
-      end
-      self.waiting_for_train_to_leave.schedule = schedule
-    end
-  end
-  self.waiting_for_train_to_leave = nil
-
   self.cooldown_remaining = self.cooldown_remaining - ticks
 
   if self.cooldown_remaining > 0 then
@@ -187,6 +173,7 @@ function TrainDepot:update(ticks)
   self.cooldown_remaining = 0 -- clamp to 0
 
   if self.paused then
+    util.print("Paused...")
     goto done
   end
 
@@ -198,7 +185,7 @@ function TrainDepot:update(ticks)
       goto done
     end
 
-    complete, auto_scheduled = self.train_build:update(ticks)
+    complete, auto_scheduled, reason = self.train_build:update(ticks)
     if complete then
       if auto_scheduled then
         self.waiting_for_train_to_leave = self.train_build.train
@@ -208,17 +195,20 @@ function TrainDepot:update(ticks)
       self.num_trains_built = (self.num_trains_built or 0) + 1
     end
   else
-    -- util.print("[" .. self.depot.unit_number .. "] No train to build...")
+    util.print("[" .. self.depot.unit_number .. "] No train to build...")
   end
 
   if complete then
     local train_build = self:construct_train_build()
 
     if not train_build then
+      util.print("[" .. self.depot.unit_number .. "] Could not construct train build...")
       goto done
     end
 
-    if not train_build:can_place_all_remaining() then
+    is_clear, reason = train_build:can_place_all_remaining()
+    if not is_clear then
+      util.print("[" .. self.depot.unit_number .. "] No clearance [" .. (reason or "nil") .. "]...")
       self.cooldown_remaining = _CONFIG._COOLDOWN_TICKS
       goto done
     end
@@ -227,7 +217,16 @@ function TrainDepot:update(ticks)
     self.train_build:update(ticks)
   end
 
+
 ::done::
+
+  if reason then
+    if not self.status_text then
+      if self.depot and self.depot.valid then
+        self.status_text = self.depot.surface.create_entity({name = "flying-text", position = self.depot.position, direction = self.depot.direction, force = self.depot.force, text = reason})
+      end
+    end
+  end
 
   return valid
 end
@@ -245,6 +244,10 @@ function TrainDepot.deserialize(data)
       self.rail = self:get_connected_rail()
       self.waiting_for_tile_to_clear = nil
     end
+    if data.version < 3 then
+      self.waiting_for_train_to_leave = nil
+      self.storage = nil
+    end
     self.version = TrainDepot.version
     return self
   end
@@ -252,32 +255,32 @@ function TrainDepot.deserialize(data)
 end
 
 function TrainDepot:destroy()
-  local storage = self.storage
-  self.storage = nil
+--   local storage = self.storage
+--   self.storage = nil
 
-  if not storage.valid then
-    goto done
-  end
+--   if not storage.valid then
+--     goto done
+--   end
 
-  local surface = storage.surface
-  local new_storage = surface.create_entity({name = "steel-chest", position = storage.position, force = storage.force})
-  local oldinventory = storage.get_output_inventory()
-  local newinventory = new_storage.get_output_inventory()
+--   local surface = storage.surface
+--   local new_storage = surface.create_entity({name = "steel-chest", position = storage.position, force = storage.force})
+--   local oldinventory = storage.get_output_inventory()
+--   local newinventory = new_storage.get_output_inventory()
 
-  -- Chests don't support filters....doh
-  -- for stack_index = 1, #oldinventory do
-  --   local filter = oldinventory.get_filter(stack_index)
-  --   newinventory.set_filter(stack_index, filter)
-  -- end
+--   -- Chests don't support filters....doh
+--   -- for stack_index = 1, #oldinventory do
+--   --   local filter = oldinventory.get_filter(stack_index)
+--   --   newinventory.set_filter(stack_index, filter)
+--   -- end
 
-  local oldcontents = oldinventory.get_contents()
-  for item, count in pairs(oldcontents) do
-    newinventory.insert({name = item, count = count})
-  end
+--   local oldcontents = oldinventory.get_contents()
+--   for item, count in pairs(oldcontents) do
+--     newinventory.insert({name = item, count = count})
+--   end
 
-  storage.destroy()
+--   storage.destroy()
 
-::done::
+-- ::done::
 end
 
 return TrainDepot

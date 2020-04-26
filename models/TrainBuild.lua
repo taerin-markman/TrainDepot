@@ -6,17 +6,18 @@ local TrainBuild = {}
 TrainBuild.__index = TrainBuild
 TrainBuild.version = 1
 
-function TrainBuild.new(depot, train, storage, parameters)
+function TrainBuild.new(depot, connected_rail, train, storage, parameters)
   local self = setmetatable({}, TrainBuild)
   self.type = "TrainBuild"
   self.version = TrainBuild.version
 
-  self.train_plan = TrainPlan.new(depot, train, parameters)
+  self.train_plan = TrainPlan.new(depot, connected_rail, train, parameters)
   self.current_stock_index = 1
   self.current_progress = 0
   self.built_stock = {}
   self.train = nil
   self.depot = depot
+  self.connected_rail = connected_rail
   self.storage = storage
 
   return self
@@ -31,40 +32,21 @@ function TrainBuild:calculate_progress_from_ticks(ticks)
   return progress -- math.ceil(progress)
 end
 
-function TrainBuild:can_place_next()
-  return self.train_plan:can_place(self.current_stock_index)
-end
-
 function TrainBuild:can_place_all_remaining()
   local is_clear = true
+  local clearance_reason = nil
   local length = self.train_plan:length()
 
   for index = self.current_stock_index, length do
-    local offset = 0
-    if index == length then
-      offset = 3 -- TODO: connection_distance/joint_distance?
+    local clear, reason = self.train_plan:can_place(self.depot.surface, index)
+    if not clear then
+      is_clear = false
+      clearance_reason = reason
+      break
     end
-
-    is_clear = is_clear and self.train_plan:can_place(self.depot, index, offset)
   end
 
-  return is_clear
-end
-
-function TrainBuild.can_place_clone_at_depot(depot, train)
-  local num = #train.carriages
-  local can_place = true
-
-  for stock_index = 1, num do
-    local stock_plan = {name = "cargo-wagon"}
-    local offset = 0
-    if stock_index == num then
-      offset = 3 -- TODO: connection_distance/joint_distance?
-    end
-    can_place = can_place and TrainPlan.can_place_at_depot(depot, stock_plan, stock_index, offset)
-  end
-
-  return can_place
+  return is_clear, clearance_reason
 end
 
 function TrainBuild:valid()
@@ -80,6 +62,7 @@ end
 function TrainBuild:update(ticks)
   local complete = false
   local auto_scheduled = false
+  local return_reason = nil
 
   self.current_progress = self.current_progress + self:calculate_progress_from_ticks(ticks)
 
@@ -89,10 +72,12 @@ function TrainBuild:update(ticks)
 
     local stock = nil
 
-    if self:can_place_all_remaining() then
+    local can_place, reason = self:can_place_all_remaining()
+    if can_place then
       util.print("building: " .. self.current_stock_index .. " of " .. self.train_plan:length())
       stock = self.train_plan:place(self.depot.surface, self.current_stock_index, self.storage)
     else
+      return_reason = reason
       util.print("waiting for clearance")
     end
 
@@ -115,7 +100,7 @@ function TrainBuild:update(ticks)
     complete = true
   end
 
-  return complete, auto_scheduled
+  return complete, auto_scheduled, return_reason
 end
 
 function TrainBuild:serialize()

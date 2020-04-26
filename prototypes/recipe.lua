@@ -13,12 +13,12 @@ trainDepotRecipe.result = "train-depot"
 local trainCounterRecipe = table.deepcopy(data.raw.recipe["constant-combinator"])
 
 trainCounterRecipe.enabled = false
-trainCounterRecipe.name = "train-counter"
+trainCounterRecipe.name = "train-depot-counter"
 trainCounterRecipe.ingredients =
 {
   {"steel-plate", 5},
   {"electronic-circuit", 10}
 }
-trainCounterRecipe.result = "train-counter"
+trainCounterRecipe.result = "train-depot-counter"
 
 data:extend({trainDepotRecipe, trainCounterRecipe})
